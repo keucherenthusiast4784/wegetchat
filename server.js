@@ -2,6 +2,7 @@ const express = require('express');
 const session = require('express-session');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
+const webpush = require('web-push');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -22,7 +23,8 @@ const defaultDb = {
   conversations: [],
   messages: [],
   friendships: [],
-  notifications: []
+  notifications: [],
+  pushSubscriptions: []
 };
 
 const loadDb = () => {
@@ -47,6 +49,21 @@ const saveDb = () => {
 
 const isProduction = process.env.NODE_ENV === 'production';
 if (isProduction) app.set('trust proxy', 1);
+
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@wegetchat.local';
+const vapidKeys = {
+  publicKey: process.env.VAPID_PUBLIC_KEY,
+  privateKey: process.env.VAPID_PRIVATE_KEY
+};
+
+if (!vapidKeys.publicKey || !vapidKeys.privateKey) {
+  const generated = webpush.generateVAPIDKeys();
+  vapidKeys.publicKey = generated.publicKey;
+  vapidKeys.privateKey = generated.privateKey;
+  console.warn('VAPID keys not set in env. Generated ephemeral keys for this boot.');
+}
+
+webpush.setVapidDetails(VAPID_SUBJECT, vapidKeys.publicKey, vapidKeys.privateKey);
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -87,7 +104,33 @@ const getConversationForUsers = (a, b) => {
   );
 };
 
-const upsertNotification = (userId, text) => {
+const notifyUserPush = async (userId, title, body, pathToOpen = '/') => {
+  const user = db.users.find((u) => u.id === userId);
+  if (!user || !user.notificationsEnabled) return;
+
+  const subscriptions = db.pushSubscriptions.filter((s) => s.userId === userId);
+  if (!subscriptions.length) return;
+
+  const payload = JSON.stringify({ title, body, url: pathToOpen });
+  const failedIds = [];
+
+  await Promise.all(subscriptions.map(async (sub) => {
+    try {
+      await webpush.sendNotification(sub.subscription, payload);
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) {
+        failedIds.push(sub.id);
+      }
+    }
+  }));
+
+  if (failedIds.length) {
+    db.pushSubscriptions = db.pushSubscriptions.filter((s) => !failedIds.includes(s.id));
+    saveDb();
+  }
+};
+
+const upsertNotification = async (userId, text, pathToOpen = '/') => {
   db.notifications.push({
     id: uuidv4(),
     userId,
@@ -95,7 +138,45 @@ const upsertNotification = (userId, text) => {
     createdAt: new Date().toISOString(),
     read: false
   });
+  await notifyUserPush(userId, 'WeGetChat', text, pathToOpen);
 };
+
+app.get('/api/push/public-key', auth, (_req, res) => {
+  res.json({ publicKey: vapidKeys.publicKey });
+});
+
+app.post('/api/push/subscribe', auth, (req, res) => {
+  const subscription = req.body.subscription;
+  if (!subscription || !subscription.endpoint || !subscription.keys) {
+    return res.status(400).json({ error: 'Invalid subscription' });
+  }
+
+  const existing = db.pushSubscriptions.find(
+    (s) => s.userId === req.user.id && s.subscription.endpoint === subscription.endpoint
+  );
+
+  if (existing) {
+    existing.subscription = subscription;
+  } else {
+    db.pushSubscriptions.push({
+      id: uuidv4(),
+      userId: req.user.id,
+      subscription,
+      createdAt: new Date().toISOString()
+    });
+  }
+  saveDb();
+  res.json({ ok: true });
+});
+
+app.post('/api/push/unsubscribe', auth, (req, res) => {
+  const endpoint = req.body.endpoint;
+  db.pushSubscriptions = db.pushSubscriptions.filter(
+    (s) => !(s.userId === req.user.id && s.subscription.endpoint === endpoint)
+  );
+  saveDb();
+  res.json({ ok: true });
+});
 
 app.post('/api/register', async (req, res) => {
   const { username, password } = req.body;
@@ -178,7 +259,7 @@ app.get('/api/users/search', auth, (req, res) => {
   res.json({ users });
 });
 
-app.post('/api/friends/:friendId', auth, (req, res) => {
+app.post('/api/friends/:friendId', auth, async (req, res) => {
   const { friendId } = req.params;
   if (friendId === req.user.id) return res.status(400).json({ error: 'Cannot add yourself' });
   const friend = db.users.find((u) => u.id === friendId);
@@ -197,7 +278,7 @@ app.post('/api/friends/:friendId', auth, (req, res) => {
       createdAt: new Date().toISOString()
     });
   }
-  upsertNotification(friendId, `${req.user.username} added you as a friend.`);
+  await upsertNotification(friendId, `${req.user.username} added you as a friend.`);
   saveDb();
   res.json({ ok: true });
 });
@@ -235,7 +316,7 @@ app.get('/api/conversations/:id/messages', auth, (req, res) => {
   res.json({ messages });
 });
 
-app.post('/api/conversations/:id/messages', auth, upload.single('attachment'), (req, res) => {
+app.post('/api/conversations/:id/messages', auth, upload.single('attachment'), async (req, res) => {
   const convo = db.conversations.find((c) => c.id === req.params.id);
   if (!convo || !convo.participants.includes(req.user.id)) return res.status(404).json({ error: 'Conversation not found' });
   const body = (req.body.body || '').trim();
@@ -254,7 +335,7 @@ app.post('/api/conversations/:id/messages', auth, upload.single('attachment'), (
   db.messages.push(msg);
 
   const recipientId = convo.participants.find((id) => id !== req.user.id);
-  upsertNotification(recipientId, `New message from ${req.user.username}`);
+  await upsertNotification(recipientId, `New message from ${req.user.username}`, `/`);
 
   saveDb();
   res.json({ message: msg });

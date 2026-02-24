@@ -14,6 +14,45 @@ const api = async (url, options = {}) => {
 
 const fmt = (iso) => new Date(iso).toLocaleString();
 
+const base64ToUint8Array = (base64String) => {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+};
+
+async function enablePushNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    qs('pushStatus').textContent = 'Push not supported in this browser.';
+    return;
+  }
+
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    qs('pushStatus').textContent = 'Notification permission denied.';
+    return;
+  }
+
+  const reg = await navigator.serviceWorker.register('/sw.js');
+  const { publicKey } = await api('/api/push/public-key');
+  const existing = await reg.pushManager.getSubscription();
+
+  if (!existing) {
+    const subscription = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64ToUint8Array(publicKey)
+    });
+
+    await api('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscription })
+    });
+  }
+
+  qs('pushStatus').textContent = 'Browser push notifications enabled.';
+}
+
 async function loadMe() {
   try {
     const { user } = await api('/api/me');
@@ -180,6 +219,14 @@ qs('settingsForm').onsubmit = async (e) => {
 qs('readNotifsBtn').onclick = async () => {
   await api('/api/notifications/read-all', { method: 'POST' });
   await refreshNotifications();
+};
+
+qs('enablePushBtn').onclick = async () => {
+  try {
+    await enablePushNotifications();
+  } catch (e) {
+    qs('pushStatus').textContent = `Could not enable push: ${e.message}`;
+  }
 };
 
 loadMe();
