@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WeGetChat</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main>
+    <section id="authView" class="card">
+      <h1>WeGetChat</h1>
+      <p>Login or create an account (username + password only).</p>
+      <div class="row">
+        <input id="username" placeholder="Username" />
+        <input id="password" type="password" placeholder="Password" />
+      </div>
+      <div class="row">
+        <button id="loginBtn">Login</button>
+        <button id="registerBtn">Register</button>
+      </div>
+      <p id="authError" class="error"></p>
+    </section>
+
+    <section id="appView" class="hidden">
+      <aside class="sidebar card">
+        <div class="profile">
+          <img id="myPfp" class="pfp" alt="Profile" />
+          <div>
+            <strong id="myName"></strong>
+            <div id="myStatus"></div>
+          </div>
+        </div>
+        <button id="logoutBtn">Logout</button>
+
+        <h3>Add people</h3>
+        <div class="row">
+          <input id="searchInput" placeholder="Search by username" />
+          <button id="searchBtn">Find</button>
+        </div>
+        <ul id="searchResults"></ul>
+
+        <h3>Chats</h3>
+        <ul id="conversations"></ul>
+      </aside>
+
+      <section class="chat card">
+        <h2 id="chatTitle">Select a conversation</h2>
+        <div id="messages" class="messages"></div>
+        <form id="messageForm" class="row">
+          <input id="messageInput" placeholder="Type a message" />
+          <input id="attachmentInput" type="file" />
+          <button type="submit">Send</button>
+        </form>
+      </section>
+
+      <aside class="panel card">
+        <h3>Notifications</h3>
+        <button id="readNotifsBtn">Mark all read</button>
+        <ul id="notifications"></ul>
+        <button id="enablePushBtn">Enable browser push</button>
+        <div id="pushStatus"></div>
+
+        <h3>Settings</h3>
+        <form id="settingsForm">
+          <input id="statusInput" placeholder="Status text" maxlength="140" />
+          <label><input id="notificationsEnabled" type="checkbox" /> Enable notifications</label>
+          <input id="pfpInput" type="file" accept="image/*" />
+          <button type="submit">Save settings</button>
+        </form>
+      </aside>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
