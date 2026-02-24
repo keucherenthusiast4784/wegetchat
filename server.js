@@ -7,12 +7,15 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const DB_FILE = path.join(__dirname, 'data', 'db.json');
-const uploadDir = path.join(__dirname, 'uploads');
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+const SESSION_SECRET = process.env.SESSION_SECRET || 'wegetchat-dev-secret-change-me';
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
+const UPLOAD_DIR = process.env.UPLOAD_DIR ? path.resolve(process.env.UPLOAD_DIR) : path.join(__dirname, 'uploads');
+const DB_FILE = path.join(DATA_DIR, 'db.json');
 
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-if (!fs.existsSync(path.dirname(DB_FILE))) fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const defaultDb = {
   users: [],
@@ -42,16 +45,24 @@ const saveDb = () => {
   fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 };
 
+const isProduction = process.env.NODE_ENV === 'production';
+if (isProduction) app.set('trust proxy', 1);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(session({
-  secret: 'wegetchat-secret-key',
+  secret: SESSION_SECRET,
   resave: false,
-  saveUninitialized: false
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isProduction
+  }
 }));
 
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
+  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname || '');
     cb(null, `${Date.now()}-${uuidv4()}${ext}`);
@@ -59,7 +70,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-app.use('/uploads', express.static(uploadDir));
+app.use('/uploads', express.static(UPLOAD_DIR));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const auth = (req, res, next) => {
@@ -278,6 +289,6 @@ app.post('/api/notifications/read-all', auth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.listen(PORT, () => {
-  console.log(`wegetchat listening on http://localhost:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`wegetchat listening on http://${HOST}:${PORT}`);
 });
